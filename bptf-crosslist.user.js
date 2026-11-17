@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         backpack.tf: cross-list one of each from Marketplace.TF
 // @namespace    https://github.com/JA-Marshall/bptf-crosslist
-// @version      1.0.0
+// @version      1.1.0
 // @description  On next.backpack.tf, one button loads your Marketplace.TF inventory (which also clears cross-listings that sold or were delisted), works out every item you have not cross-listed yet, one copy each, and lists them in batches of 100 after you confirm. Never runs on its own.
 // @match        https://next.backpack.tf/*
 // @grant        GM_getValue
@@ -24,6 +24,8 @@
  * Auth is the site's own Bearer token, so the calls go through the page's own client (window.$nuxt.$client.http).
  * The price is the one set on Marketplace.TF; backpack.tf ignores currencies for a Marketplace.TF cross-listing.
  * The 4 minutes of the site's dialog is it drawing 16k tiles, not the fetch.
+ * The description box goes on every listing as its details (200 characters, kept between runs; first filled from the
+ * default sell comment set on backpack.tf).
  * One copy per item name: the cheapest copy on Marketplace.TF. A name already cross-listed is skipped, so the next
  * run after a sale lists the next copy. Nothing is listed until you press the confirm button.
  */
@@ -34,6 +36,8 @@
     const BATCH = 100;
     const SKIP_KEY = 'skipWords';
     const LAST_KEY = 'lastRun';
+    const DESC_KEY = 'description';
+    const MAX_DESC = 200; // the site's own limit (maxDetailsLength)
 
     const http = () => W.$nuxt && W.$nuxt.$client && W.$nuxt.$client.http;
     const me = () => W.$nuxt && W.$nuxt.$auth && W.$nuxt.$auth.user;
@@ -49,6 +53,8 @@
         <div data-last style="opacity:.8;margin-bottom:6px"></div>
         <label style="display:block;margin-bottom:6px">Skip names containing (comma separated)
           <input data-skip style="width:100%;box-sizing:border-box;background:#111;color:#eee;border:1px solid #444;padding:3px"></label>
+        <label style="display:block;margin-bottom:6px">Description on every listing (<span data-count></span>/200)
+          <textarea data-desc maxlength="200" rows="3" style="width:100%;box-sizing:border-box;background:#111;color:#eee;border:1px solid #444;padding:3px;resize:vertical"></textarea></label>
         <button data-load style="width:100%;padding:6px;background:#54748b;color:#fff;border:0;border-radius:4px;cursor:pointer">Load and refresh</button>
         <div data-out style="margin-top:8px;white-space:pre-wrap"></div>
         <button data-go style="display:none;width:100%;margin-top:6px;padding:6px;background:#3a8f4b;color:#fff;border:0;border-radius:4px;cursor:pointer"></button>
@@ -58,6 +64,15 @@
     const skipInput = $('skip');
     skipInput.value = GM_getValue(SKIP_KEY, '');
     skipInput.addEventListener('change', () => GM_setValue(SKIP_KEY, skipInput.value));
+    const descInput = $('desc');
+    const showCount = () => { $('count').textContent = descInput.value.length; };
+    descInput.value = GM_getValue(DESC_KEY, '');
+    if (!descInput.value) { // first run: start from the default sell comment set on backpack.tf, once the page has it
+        const fill = () => { const u = me(); if (u && u.preferences && u.preferences.defaultSellOrderComment && !descInput.value) { descInput.value = u.preferences.defaultSellOrderComment.slice(0, MAX_DESC); showCount(); } };
+        fill(); setTimeout(fill, 3000);
+    }
+    descInput.addEventListener('input', () => { GM_setValue(DESC_KEY, descInput.value); showCount(); });
+    showCount();
     const showLast = () => {
         const last = GM_getValue(LAST_KEY, '');
         $('last').textContent = last ? `Last run: ${last}${last.startsWith(today()) ? '' : ' (not today)'}` : 'Never run from here.';
@@ -128,8 +143,8 @@
 
     $('go').addEventListener('click', async () => {
         if (!plan.length) return;
-        $('go').disabled = true; $('load').disabled = true;
-        const details = (me().preferences && me().preferences.defaultSellOrderComment) || '';
+        $('go').disabled = true; $('load').disabled = true; descInput.disabled = true;
+        const details = descInput.value.trim().slice(0, MAX_DESC);
         let ok = 0; const failed = [];
         try {
             for (let i = 0; i < plan.length; i += BATCH) {
@@ -152,7 +167,7 @@
             GM_setValue(LAST_KEY, `${today()} ${new Date().toTimeString().slice(0, 5)} (listed ${ok})`);
             showLast();
             out(`Done: ${ok} listed, ${failed.length} not.${failed.length ? `\n\n${failed.slice(0, 40).join('\n')}${failed.length > 40 ? `\n…and ${failed.length - 40} more` : ''}` : ''}`);
-            plan = []; $('go').style.display = 'none'; $('go').disabled = false; $('load').disabled = false;
+            plan = []; $('go').style.display = 'none'; $('go').disabled = false; $('load').disabled = false; descInput.disabled = false;
         }
     });
 })();
