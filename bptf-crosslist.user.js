@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         backpack.tf: cross-list one of each from Marketplace.TF
 // @namespace    https://github.com/JA-Marshall/bptf-crosslist
-// @version      1.1.0
+// @version      1.2.0
 // @description  On next.backpack.tf, one button loads your Marketplace.TF inventory (which also clears cross-listings that sold or were delisted), works out every item you have not cross-listed yet, one copy each, and lists them in batches of 100 after you confirm. Never runs on its own.
 // @match        https://next.backpack.tf/*
 // @grant        GM_getValue
@@ -26,6 +26,7 @@
  * The 4 minutes of the site's dialog is it drawing 16k tiles, not the fetch.
  * The description box goes on every listing as its details (200 characters, kept between runs; first filled from the
  * default sell comment set on backpack.tf).
+ * The minimum price box leaves out items whose cheapest copy is under it (USD, the Marketplace.TF price).
  * One copy per item name: the cheapest copy on Marketplace.TF. A name already cross-listed is skipped, so the next
  * run after a sale lists the next copy. Nothing is listed until you press the confirm button.
  */
@@ -37,6 +38,7 @@
     const SKIP_KEY = 'skipWords';
     const LAST_KEY = 'lastRun';
     const DESC_KEY = 'description';
+    const MIN_KEY = 'minPrice';
     const MAX_DESC = 200; // the site's own limit (maxDetailsLength)
 
     const http = () => W.$nuxt && W.$nuxt.$client && W.$nuxt.$client.http;
@@ -53,6 +55,8 @@
         <div data-last style="opacity:.8;margin-bottom:6px"></div>
         <label style="display:block;margin-bottom:6px">Skip names containing (comma separated)
           <input data-skip style="width:100%;box-sizing:border-box;background:#111;color:#eee;border:1px solid #444;padding:3px"></label>
+        <label style="display:block;margin-bottom:6px">Only list items priced at least $ (Marketplace.TF price, blank = all)
+          <input data-min type="number" min="0" step="0.01" style="width:100%;box-sizing:border-box;background:#111;color:#eee;border:1px solid #444;padding:3px"></label>
         <label style="display:block;margin-bottom:6px">Description on every listing (<span data-count></span>/200)
           <textarea data-desc maxlength="200" rows="3" style="width:100%;box-sizing:border-box;background:#111;color:#eee;border:1px solid #444;padding:3px;resize:vertical"></textarea></label>
         <button data-load style="width:100%;padding:6px;background:#54748b;color:#fff;border:0;border-radius:4px;cursor:pointer">Load and refresh</button>
@@ -64,6 +68,9 @@
     const skipInput = $('skip');
     skipInput.value = GM_getValue(SKIP_KEY, '');
     skipInput.addEventListener('change', () => GM_setValue(SKIP_KEY, skipInput.value));
+    const minInput = $('min');
+    minInput.value = GM_getValue(MIN_KEY, '');
+    minInput.addEventListener('change', () => GM_setValue(MIN_KEY, minInput.value));
     const descInput = $('desc');
     const showCount = () => { $('count').textContent = descInput.value.length; };
     descInput.value = GM_getValue(DESC_KEY, '');
@@ -120,6 +127,7 @@
             out('Reading your live listings…');
             const listed = await listedNames();
             const skipWords = skipInput.value.split(',').map((s) => s.trim().toLowerCase()).filter(Boolean);
+            const minPrice = parseFloat(minInput.value) || 0;
             const best = new Map();
             for (const i of items) {
                 if (!i.tradable || listed.has(i.name)) continue;
@@ -128,12 +136,15 @@
                 const cur = best.get(i.name);
                 if (!cur || price < cur.price) best.set(i.name, { id: i.id, name: i.name, price });
             }
-            plan = [...best.values()].sort((a, b) => b.price - a.price);
+            const all = [...best.values()];
+            plan = all.filter((p) => p.price >= minPrice).sort((a, b) => b.price - a.price);
+            const underMin = all.length - plan.length;
             GM_setValue(LAST_KEY, `${today()} ${new Date().toTimeString().slice(0, 5)} (refresh)`);
             showLast();
             const sample = plan.slice(0, 15).map((p) => `$${p.price.toFixed(2)}  ${p.name}`).join('\n');
             out(`${items.length} unlisted Marketplace.TF items, ${listed.size} names already cross-listed.\n` +
-                `${plan.length} new items to list, one copy each (cheapest copy, at your Marketplace.TF price).\n\n` +
+                `${plan.length} new items to list, one copy each (cheapest copy, at your Marketplace.TF price)` +
+                (underMin ? `; ${underMin} more under $${minPrice.toFixed(2)} left out.\n\n` : '.\n\n') +
                 (plan.length ? `Top by price:\n${sample}${plan.length > 15 ? `\n…and ${plan.length - 15} more` : ''}` : 'Nothing new to list.'));
             if (plan.length) { $('go').textContent = `List ${plan.length} items`; $('go').style.display = ''; }
         } catch (e) {

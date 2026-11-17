@@ -16,7 +16,8 @@ case you usually want one listing for it, not 300.
    backpack.tf listings. Loading the Marketplace.TF inventory is also what makes backpack.tf drop
    cross-listings whose item sold or was delisted, so run it once a day.
 2. Plans one listing per item name you have not cross-listed yet, using the cheapest copy. Names matching
-   your skip words (e.g. `Refined Metal, Decal Tool`) are left out.
+   your skip words (e.g. `Refined Metal, Decal Tool`) and items under your minimum price (USD) are left
+   out. A description you type goes on every listing (200 characters max).
 3. Shows how many it will list and the most expensive 15. **Nothing is listed until you press
    "List N items".**
 4. Posts them in batches of 100 and reports any that failed with backpack.tf's reason.
