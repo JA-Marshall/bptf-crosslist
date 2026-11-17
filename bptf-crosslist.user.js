@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         backpack.tf: cross-list one of each from Marketplace.TF
 // @namespace    https://github.com/JA-Marshall/bptf-crosslist
-// @version      1.2.0
+// @version      1.3.0
 // @description  On next.backpack.tf, one button loads your Marketplace.TF inventory (which also clears cross-listings that sold or were delisted), works out every item you have not cross-listed yet, one copy each, and lists them in batches of 100 after you confirm. Never runs on its own.
 // @match        https://next.backpack.tf/*
 // @grant        GM_getValue
@@ -27,6 +27,7 @@
  * The description box goes on every listing as its details (200 characters, kept between runs; first filled from the
  * default sell comment set on backpack.tf).
  * The minimum price box leaves out items whose cheapest copy is under it (USD, the Marketplace.TF price).
+ * Rate limits (429) are waited out and the same batch is sent again; only an item backpack.tf refuses is reported.
  * One copy per item name: the cheapest copy on Marketplace.TF. A name already cross-listed is skipped, so the next
  * run after a sale lists the next copy. Nothing is listed until you press the confirm button.
  */
@@ -35,6 +36,8 @@
     const W = unsafeWindow;
     const PAGE = 10000;
     const BATCH = 100;
+    const GAP_MS = 5000; // between batches; faster than this and backpack.tf answers 429
+    const MAX_TRIES = 8;
     const SKIP_KEY = 'skipWords';
     const LAST_KEY = 'lastRun';
     const DESC_KEY = 'description';
@@ -162,17 +165,29 @@
                 const chunk = plan.slice(i, i + BATCH);
                 out(`Listing ${i + 1}–${i + chunk.length} of ${plan.length}… (${ok} posted so far)`);
                 const body = chunk.map((p) => ({ id: p.id, intent: 'sell', source: 'marketplaceTf', currencies: {}, details }));
-                try {
-                    const r = await http().post('/_classifieds/userListings/batch', body);
-                    r.data.forEach((row, k) => {
-                        if (row && Object.prototype.hasOwnProperty.call(row, 'result')) ok++;
-                        else failed.push(`${chunk[k] ? chunk[k].name : '?'}: ${row && row.error ? row.error.message : 'no answer'}`);
-                    });
-                } catch (e) {
-                    chunk.forEach((p) => failed.push(`${p.name}: ${e.response ? e.response.status : e.message}`));
-                    if (e.response && e.response.status === 429) { out('Rate limited, waiting 30 s…'); await sleep(30000); }
+                for (let attempt = 1; ; attempt++) {
+                    try {
+                        const r = await http().post('/_classifieds/userListings/batch', body);
+                        r.data.forEach((row, k) => {
+                            if (row && Object.prototype.hasOwnProperty.call(row, 'result')) ok++;
+                            else failed.push(`${chunk[k] ? chunk[k].name : '?'}: ${row && row.error ? row.error.message : 'no answer'}`);
+                        });
+                        break;
+                    } catch (e) {
+                        const status = e.response ? e.response.status : 0;
+                        // rate limited (429) or a passing server error: wait and send the same batch again
+                        if ((status === 429 || status >= 500 || !status) && attempt < MAX_TRIES) {
+                            const after = Number(e.response && e.response.headers && e.response.headers['retry-after']);
+                            const wait = after > 0 ? after * 1000 : Math.min(15000 * attempt, 120000);
+                            out(`backpack.tf says slow down (${status || 'no answer'}); waiting ${Math.round(wait / 1000)} s, then batch ${i / BATCH + 1} again (try ${attempt + 1} of ${MAX_TRIES}). ${ok} posted so far.`);
+                            await sleep(wait);
+                            continue;
+                        }
+                        chunk.forEach((p) => failed.push(`${p.name}: ${status || e.message}`));
+                        break;
+                    }
                 }
-                await sleep(1500);
+                await sleep(GAP_MS);
             }
         } finally {
             GM_setValue(LAST_KEY, `${today()} ${new Date().toTimeString().slice(0, 5)} (listed ${ok})`);
